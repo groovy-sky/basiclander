@@ -203,6 +203,7 @@ func renderWorld() {
 	buf.Write([]byte("[gray]███▓████████████████▓▓▓██████▓▓████████▓▓▓████████▓▓▓▓█████████████▓▓████████▓████▓▓███████████▓▓██████▓▓▓▓▓██████████[-]"))
 	buf.Write([]byte("\n"))
 	buf.Write([]byte("\n"))
+	buf.Write([]byte(strings.Repeat(" ", 22)))
 	if gameOver {
 		if playerCrashed {
 			buf.Write([]byte("  [ CRASHED ] "))
@@ -225,7 +226,7 @@ func renderWorld() {
 	}
 	buf.Write([]byte("\n"))
 	buf.Write([]byte("\n"))
-	buf.Write([]byte(fmt.Sprintf("Fuel: %d.0 - Speed: %.01f - Rotation speed: %.01f - Rotation angle: %.01f", playerFuel, playerLV, playerAV, playerAngle)))
+	buf.Write([]byte(fmt.Sprintf(" Fuel: %d.0 kg  -  Speed: %.01f m/s  -  Rotation speed: %.01f deg/s  -  Rotation angle: %.01f deg", playerFuel, playerLV, playerAV, playerAngle)))
 
 	tv.SetBytes(buf.Bytes())
 }
@@ -323,7 +324,7 @@ func runSimulation() {
 
 		position := actors["player"].GetPosition()
 		playerX, playerY = position.X, position.Y
-		playerAV = actors["player"].GetAngularVelocity()
+		playerAV = actors["player"].GetAngularVelocity() * (180 / math.Pi)
 		playerLV = actors["player"].GetLinearVelocity().Y
 
 		list := actors["player"].GetContactList()
