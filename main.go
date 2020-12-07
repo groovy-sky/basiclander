@@ -28,11 +28,11 @@ var lastLT = time.Time{}
 
 const moonGravity = -1.625 * .1
 
-const thrustMagnitude = 1000.0
+const thrustMagnitude = 777.7
 
 const rotateSpeed = 0.005
 
-const debug = true
+const debug = false
 
 const (
 	startAngle = math.Pi / 3
@@ -40,6 +40,15 @@ const (
 	startLVY   = 0
 	startX     = 15
 	startY     = 32
+
+	startFuel = 2375
+
+	thrustBurnRate  = 15
+	angularBurnRate = 5
+
+	maxLandingA  = 27.0
+	maxLandingAV = 13.5
+	maxLandingLV = 1.4
 )
 
 var (
@@ -48,6 +57,11 @@ var (
 	playerAV         float64
 	playerLV         float64
 	playerLanded     bool
+
+	playerFuel int
+
+	gameOver      bool
+	playerCrashed bool
 )
 
 const (
@@ -76,7 +90,7 @@ func setupInput() {
 
 	_ = inputConfig.Set("Left", func(ev *tcell.EventKey) *tcell.EventKey {
 		updates <- func() {
-			if playerLanded {
+			if gameOver || playerLanded || playerFuel <= 0 {
 				return
 			}
 
@@ -84,6 +98,7 @@ func setupInput() {
 			v -= rotateSpeed
 			actors["player"].SetAngularVelocity(v)
 			lastAT = time.Now()
+			playerFuel -= angularBurnRate
 		}
 
 		return nil
@@ -91,7 +106,7 @@ func setupInput() {
 
 	_ = inputConfig.Set("Right", func(ev *tcell.EventKey) *tcell.EventKey {
 		updates <- func() {
-			if playerLanded {
+			if gameOver || playerLanded || playerFuel <= 0 {
 				return
 			}
 
@@ -99,6 +114,7 @@ func setupInput() {
 			v += rotateSpeed
 			actors["player"].SetAngularVelocity(v)
 			lastAT = time.Now()
+			playerFuel -= angularBurnRate
 		}
 
 		return nil
@@ -107,10 +123,14 @@ func setupInput() {
 	moveFunc :=
 		func() {
 			updates <- func() {
+				if gameOver || playerFuel <= 0 {
+					return
+				}
 				angle := actors["player"].GetAngle() - math.Pi/2
 				//actors["player"].ApplyLinearImpulseToCenter(box2d.B2Vec2{math.Cos(angle), math.Sin(angle)}, true)
 				actors["player"].ApplyLinearImpulse(box2d.B2Vec2{math.Sin(angle) * thrustMagnitude, math.Cos(angle) * thrustMagnitude}, actors["player"].GetWorldCenter(), true)
 				lastLT = time.Now()
+				playerFuel -= thrustBurnRate
 			}
 		}
 
@@ -121,6 +141,11 @@ func setupInput() {
 
 	_ = inputConfig.Set("Space", func(ev *tcell.EventKey) *tcell.EventKey {
 		moveFunc()
+		return nil
+	})
+
+	_ = inputConfig.Set("Escape", func(ev *tcell.EventKey) *tcell.EventKey {
+		app.Stop()
 		return nil
 	})
 
@@ -148,7 +173,9 @@ func renderWorld() {
 		}
 		for x := 0; x < screenWidth; x++ {
 			if x == px && y == py {
-				if a > 337.5 || a < 22.5 {
+				if playerCrashed {
+					buf.Write([]byte("x"))
+				} else if a > 337.5 || a < 22.5 {
 					buf.Write([]byte("⬆"))
 				} else if a < 67.5 {
 					buf.Write([]byte("⬈"))
@@ -171,30 +198,41 @@ func renderWorld() {
 			buf.Write([]byte(renderPoint(1, x, y)))
 		}
 	}
+
 	buf.Write([]byte("\n"))
 	buf.Write([]byte("[gray]███▓████████████████▓▓▓██████▓▓████████▓▓▓████████▓▓▓▓█████████████▓▓████████▓████▓▓███████████▓▓██████▓▓▓▓▓██████████[-]"))
 	buf.Write([]byte("\n"))
 	buf.Write([]byte("\n"))
-	if time.Since(lastAT) < 150*time.Millisecond {
-		buf.Write([]byte("  [ ROTATIONAL THRUSTERS ] "))
+	if gameOver {
+		if playerCrashed {
+			buf.Write([]byte("  [ CRASHED ] "))
+		} else {
+			buf.Write([]byte("  [ LANDED ] "))
+		}
+	} else if playerFuel <= 0 {
+		buf.Write([]byte("  [ OUT OF FUEL ] "))
 	} else {
-		buf.Write([]byte(strings.Repeat(" ", 27)))
-	}
-	if time.Since(lastLT) < 150*time.Millisecond {
-		buf.Write([]byte("  [ POSITIONAL THRUSTERS ] "))
-	} else {
-		buf.Write([]byte(strings.Repeat(" ", 27)))
+		if time.Since(lastAT) < 150*time.Millisecond {
+			buf.Write([]byte("  [ ROTATIONAL THRUSTERS ] "))
+		} else {
+			buf.Write([]byte(strings.Repeat(" ", 27)))
+		}
+		if time.Since(lastLT) < 150*time.Millisecond {
+			buf.Write([]byte("  [ POSITIONAL THRUSTERS ] "))
+		} else {
+			buf.Write([]byte(strings.Repeat(" ", 27)))
+		}
 	}
 	buf.Write([]byte("\n"))
-
-	// Debug
 	buf.Write([]byte("\n"))
-	buf.Write([]byte(fmt.Sprintf("%.00f,%.00f @ %.02f - Rotation angle: %.00f - Rotation speed: %.02f", playerX, playerY, playerLV, playerAngle, playerAV)))
+	buf.Write([]byte(fmt.Sprintf("Fuel: %d.0 - Speed: %.01f - Rotation speed: %.01f - Rotation angle: %.01f", playerFuel, playerLV, playerAV, playerAngle)))
 
 	tv.SetBytes(buf.Bytes())
 }
 
 func runSimulation() {
+	playerFuel = startFuel
+
 	// Define the gravity vector.
 	gravity := box2d.MakeB2Vec2(0.0, moonGravity)
 
@@ -263,30 +301,47 @@ func runSimulation() {
 			}
 		}
 
+		if gameOver {
+			app.QueueUpdateDraw(renderWorld)
+			for {
+				select {
+				case <-updates:
+				case <-t.C:
+				}
+			}
+		}
+
 		// Instruct the world to perform a single step of simulation.
 		// It is generally best to keep the time step and iterations fixed.
 		//runtime.Breakpoint()
 		world.Step(timeStep, velocityIterations, positionIterations)
 
-		list := actors["player"].GetContactList()
-		playerLanded = list != nil
-		if playerLanded && !debug {
-			v := actors["player"].GetLinearVelocity()
-			if v.X > 2.5 || v.X < -2.5 || v.Y > 2.5 || v.Y < -2.5 {
-				log.Panicf("you crashed! %f,%f", v.X, v.Y)
-			}
-			actors["player"].SetLinearVelocity(box2d.MakeB2Vec2(0, 0))
-			log.Panicf("you landed safely!")
-		}
-
 		playerAngle = math.Mod(((actors["player"].GetAngle() - 0.5*math.Pi) * (180 / math.Pi)), 360)
 		if playerAngle < 0 {
 			playerAngle = 360 + playerAngle
 		}
+
 		position := actors["player"].GetPosition()
 		playerX, playerY = position.X, position.Y
 		playerAV = actors["player"].GetAngularVelocity()
 		playerLV = actors["player"].GetLinearVelocity().Y
+
+		list := actors["player"].GetContactList()
+		playerLanded = list != nil
+		if playerLanded && !debug {
+			av := actors["player"].GetAngularVelocity()
+			lv := actors["player"].GetLinearVelocity()
+			playerCrashed = av > maxLandingAV || av < -maxLandingAV || lv.X > maxLandingLV || lv.X < -maxLandingLV || lv.Y > maxLandingLV || lv.Y < -maxLandingLV
+			if !playerCrashed {
+				crashAngle := math.Mod(((actors["player"].GetAngle() - 0.5*math.Pi) * (180 / math.Pi)), 360)
+				playerCrashed = crashAngle > maxLandingA || crashAngle < -maxLandingA
+			}
+
+			gameOver = true
+			actors["player"].SetAngularVelocity(0)
+			actors["player"].SetLinearVelocity(box2d.MakeB2Vec2(0, 0))
+		}
+
 		app.QueueUpdateDraw(renderWorld)
 	}
 }
@@ -294,10 +349,23 @@ func runSimulation() {
 func main() {
 	app = cview.NewApplication()
 
+	err := app.Init()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	w, h := app.GetScreenSize()
+	if w < screenWidth || h < screenHeight+4 {
+		log.Fatalf("failed to start basiclander: insufficient terminal dimensions: requires %dx%d: have %dx%d", screenWidth, screenHeight+4, w, h)
+	}
+
 	setupInput()
 
 	tv = cview.NewTextView()
 	tv.SetDynamicColors(true)
+	tv.SetScrollBarVisibility(cview.ScrollBarNever)
+	tv.SetWrap(false)
+	tv.SetWordWrap(false)
 
 	go runSimulation()
 

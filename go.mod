@@ -1,4 +1,4 @@
-module gitlab.com/tslocum/lunarcrafter
+module gitlab.com/tslocum/basiclander
 
 go 1.15
 
