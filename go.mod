@@ -1,4 +1,4 @@
-module gitlab.com/tslocum/basiclander
+module github.com/groovy-sky/basiclander
 
 go 1.15
 
