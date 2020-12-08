@@ -65,7 +65,7 @@ var (
 )
 
 const (
-	screenHeight = 32
+	screenHeight = 28
 	screenWidth  = 120
 )
 
